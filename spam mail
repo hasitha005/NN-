@@ -1,17 +1,30 @@
 import math
+
+# Define activation functions
 relu = lambda z: max(0, z)
 sigmoid = lambda z: 1 / (1 + math.exp(-z))
+
+# Define inputs
 x = {
     'free': 1,
     'wing': 0,
     'offer': 1
 }
+
+# Define weights for hidden layer
 h1 = {'free': 0.5, 'wing': -0.2, 'offer': 0.3}
 h2 = {'free': 0.9, 'wing': 0.1, 'offer': -0.5}
+
+# Define weights for output layer
 out = [0.7, 0.2]
+
+# Compute hidden layer outputs
 h1_out = relu(x['free']*h1['free'] + x['wing']*h1['wing'] + x['offer']*h1['offer'])
 h2_out = relu(x['free']*h2['free'] + x['wing']*h2['wing'] + x['offer']*h2['offer'])
+
+# Compute output
 out_sum = h1_out*out[0] + h2_out*out[1]
 y = sigmoid(out_sum)
+
 print("Output =", y)
 print("Spam" if y > 0.5 else "Not Spam")
