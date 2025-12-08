@@ -1,0 +1,148 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.applications.resnet50 import (
+    ResNet50,
+    preprocess_input as resnet_preprocess,
+    decode_predictions,
+)
+from tensorflow.keras.applications.efficientnet import (
+    EfficientNetB0,
+    preprocess_input as effnet_preprocess,
+)
+from PIL import Image
+
+# All models will use this spatial size
+IMG_SIZE = (224, 224)
+
+
+# -------------------- Model loading -------------------- #
+def build_models():
+    """Create ResNet50 and EfficientNetB0 models with ImageNet weights."""
+    resnet_model = ResNet50(
+        weights="imagenet",
+        input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3)
+    )
+    effnet_model = EfficientNetB0(
+        weights="imagenet",
+        input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3)
+    )
+    return resnet_model, effnet_model
+
+
+# -------------------- Image & TTA utilities -------------------- #
+def load_image(path: str) -> Image.Image:
+    """Open an image from disk and convert to RGB."""
+    return Image.open(path).convert("RGB")
+
+
+def make_tta_crops(img: Image.Image, target_size=(224, 224)):
+    """
+    Create simple TTA: 5 crops (4 corners + center) and their horizontal flips.
+    Returns a list of PIL images.
+    """
+    w, h = img.size
+    tw, th = target_size
+
+    # If the image is too small, upscale it
+    if w < tw or h < th:
+        new_w = max(w, tw)
+        new_h = max(h, th)
+        img = img.resize((new_w, new_h))
+        w, h = img.size
+
+    # Coordinates for 4 corners + center
+    cx = (w - tw) // 2
+    cy = (h - th) // 2
+    boxes = [
+        (0, 0, tw, th),             # top-left
+        (w - tw, 0, w, th),         # top-right
+        (0, h - th, tw, h),         # bottom-left
+        (w - tw, h - th, w, h),     # bottom-right
+        (cx, cy, cx + tw, cy + th)  # center
+    ]
+
+    base_crops = [img.crop(b) for b in boxes]
+    flipped_crops = [c.transpose(Image.FLIP_LEFT_RIGHT) for c in base_crops]
+
+    return base_crops + flipped_crops  # total: 10 crops
+
+
+def preprocess_batch(crops, model_type: str):
+    """
+    Convert a list of PIL crops to a preprocessed numpy batch.
+    model_type: 'resnet' or 'effnet'
+    """
+    arr = np.stack([np.array(c).astype("float32") for c in crops], axis=0)
+
+    if model_type == "resnet":
+        arr = resnet_preprocess(arr)
+    else:
+        arr = effnet_preprocess(arr)
+
+    return arr
+
+
+# -------------------- Inference with ensemble + TTA -------------------- #
+def ensemble_tta_predict(img_path: str, top_k: int = 5):
+    """
+    Run ensemble (ResNet50 + EfficientNetB0) + TTA on a single image.
+
+    Returns a list of dicts with:
+    - class_index
+    - class_id (ImageNet synset)
+    - label (human-readable)
+    - score (ensemble probability/logit)
+    """
+    resnet_model, effnet_model = build_models()
+
+    pil_img = load_image(img_path)
+    crops = make_tta_crops(pil_img, IMG_SIZE)
+
+    # Preprocess crops for each model
+    resnet_input = preprocess_batch(crops, "resnet")
+    effnet_input = preprocess_batch(crops, "effnet")
+
+    # Predict for all crops
+    resnet_preds = resnet_model.predict(resnet_input, verbose=0)
+    effnet_preds = effnet_model.predict(effnet_input, verbose=0)
+
+    # Average across TTA crops
+    resnet_mean = resnet_preds.mean(axis=0)
+    effnet_mean = effnet_preds.mean(axis=0)
+
+    # Simple ensemble: mean of both models
+    ensemble_scores = (resnet_mean + effnet_mean) / 2.0
+
+    # Indices of top-k classes
+    top_indices = np.argsort(ensemble_scores)[-top_k:][::-1]
+
+    results = []
+
+    # decode_predictions expects a (1, 1000) array
+    dummy = np.zeros((1, ensemble_scores.shape[0]), dtype="float32")
+
+    for idx in top_indices:
+        dummy[:] = 0.0
+        dummy[0, idx] = 1.0
+        decoded = decode_predictions(dummy, top=1)[0][0]  # (class_id, label, prob_dummy)
+
+        results.append(
+            {
+                "class_index": int(idx),
+                "class_id": decoded[0],
+                "label": decoded[1],
+                "score": float(ensemble_scores[idx]),
+            }
+        )
+
+    return results
+
+
+# -------------------- CLI entry point -------------------- #
+if __name__ == "__main__":
+    img_path = input("Enter image path: ").strip()
+    preds = ensemble_tta_predict(img_path, top_k=5)
+
+    print("\nTop predictions (ensemble + TTA):")
+    for p in preds:
+        print(f"{p['label']} (idx={p['class_index']}): {p['score']:.4f}")
