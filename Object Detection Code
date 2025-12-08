@@ -1,0 +1,86 @@
+import torch
+import torchvision
+from torchvision import transforms
+import cv2
+import numpy as np
+from PIL import Image
+from google.colab.patches import cv2_imshow
+from google.colab import files
+
+# ---------------- COCO class names (fallback) ---------------- #
+COCO_INSTANCE_CATEGORY_NAMES = [
+    '_background_','person','bicycle','car','motorcycle','airplane','bus','train','truck','boat',
+    'traffic light','fire hydrant','N/A','stop sign','parking meter','bench','bird','cat','dog','horse',
+    'sheep','cow','elephant','bear','zebra','giraffe','N/A','backpack','umbrella','N/A','N/A','handbag',
+    'tie','suitcase','frisbee','skis','snowboard','sports ball','kite','baseball bat','baseball glove',
+    'skateboard','surfboard','tennis racket','bottle','N/A','wine glass','cup','fork','knife','spoon',
+    'bowl','banana','apple','sandwich','orange','broccoli','carrot','hot dog','pizza','donut','cake',
+    'chair','couch','potted plant','bed','N/A','dining table','N/A','N/A','toilet','N/A','tv','laptop',
+    'mouse','remote','keyboard','cell phone','microwave','oven','toaster','sink','refrigerator','N/A',
+    'book','clock','vase','scissors','teddy bear','hair drier','toothbrush'
+]
+
+# ---------------- Load model & categories ---------------- #
+try:
+    from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
+    weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+    model = fasterrcnn_resnet50_fpn(weights=weights)
+    categories = weights.meta.get("categories", COCO_INSTANCE_CATEGORY_NAMES)
+    print("[INFO] Loaded model with new weights API.")
+except Exception as e:
+    print("[WARN] Using old API with pretrained=True. Error from new API:", e)
+    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+    categories = COCO_INSTANCE_CATEGORY_NAMES
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("[INFO] Using device:", device)
+model.to(device)
+model.eval()
+
+# ---------------- Detection function for Colab ---------------- #
+def detect_colab(score_thresh=0.6):
+    # Upload image
+    print("Please upload an image...")
+    uploaded = files.upload()
+    img_path = list(uploaded.keys())[0]
+
+    # Load image
+    img = Image.open(img_path).convert("RGB")
+    transform = transforms.ToTensor()
+    img_tensor = transform(img).to(device)
+
+    # Inference
+    with torch.no_grad():
+        outputs = model([img_tensor])[0]
+
+    boxes = outputs['boxes'].cpu().numpy()
+    labels = outputs['labels'].cpu().numpy()
+    scores = outputs['scores'].cpu().numpy()
+
+    # Convert image to OpenCV format
+    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+
+    print(f"\n[INFO] Detections with score >= {score_thresh}:\n")
+    for box, label, score in zip(boxes, labels, scores):
+        if score < score_thresh:
+            continue
+
+        x1, y1, x2, y2 = box.astype(int)
+        class_name = categories[label] if label < len(categories) else str(label)
+
+        # Draw bounding box & label
+        cv2.rectangle(img_cv, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(img_cv, f"{class_name} {score:.2f}",
+                    (x1, max(10, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2)
+
+        print(f"{class_name} (id={label}) -> {score:.3f} at [{x1}, {y1}, {x2}, {y2}]")
+
+    # Show result inside Colab
+    cv2_imshow(img_cv)
+
+# ---------------- Run once ---------------- #
+detect_colab(0.6)
