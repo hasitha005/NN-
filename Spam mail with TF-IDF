@@ -1,0 +1,27 @@
+# pip install scikit-learn
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+
+texts = [
+    "Win a free iPhone now",
+    "Exclusive offer just for you",
+    "Let's have lunch tomorrow",
+    "Please send the report",
+]
+labels = [1, 1, 0, 0]  # 1 = spam, 0 = ham
+
+vectorizer = TfidfVectorizer()
+X = vectorizer.fit_transform(texts)
+
+model = MultinomialNB()
+model.fit(X, labels)
+
+def predict_spam_tfidf(message: str):
+    x = vectorizer.transform([message])
+    pred = model.predict(x)[0]
+    return "SPAM" if pred == 1 else "NOT SPAM"
+
+if __name__ == "__main__":
+    msg = input("Enter an email text: ")
+    print("Prediction:", predict_spam_tfidf(msg))
