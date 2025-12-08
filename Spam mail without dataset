@@ -1,0 +1,21 @@
+SPAM_KEYWORDS = [
+    "free", "winner", "win", "cash", "prize", "credit card",
+    "offer", "click here", "urgent", "lottery", "congratulations"
+]
+
+def is_spam_rule_based(message: str) -> bool:
+    msg_lower = message.lower()
+    score = 0
+    for word in SPAM_KEYWORDS:
+        if word in msg_lower:
+            score += 1
+
+    # You can tune this threshold
+    return score >= 2
+
+if __name__ == "__main__":
+    msg = input("Enter an email: ")
+    if is_spam_rule_based(msg):
+        print("SPAM (rule-based)")
+    else:
+        print("NOT SPAM (rule-based)")
